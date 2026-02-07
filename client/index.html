@@ -195,10 +195,10 @@
     </div>
 
     <script>
-        const API_URL = "http://localhost:3000";
-        let globalProducts = [];
+        // DÜZELTME: Burası artık otomatik algılayacak (boş bıraktık)
+        const API_URL = ""; 
         
-        // Grafik Nesnelerini Saklamak İçin
+        let globalProducts = [];
         let charts = { price: null, change: null, compare: null };
 
         function showRegister() { document.getElementById('login-form').style.display='none'; document.getElementById('register-form').style.display='block'; }
@@ -273,20 +273,17 @@
             const product = globalProducts[index];
             const modal = document.getElementById('detailModal');
             
-            // 1. Bilgileri Doldur
             document.getElementById('m-image').src = product.image;
             document.getElementById('m-title').innerText = product.name;
             document.getElementById('m-current').innerText = product.currentPrice + " TL";
             document.getElementById('m-link').href = product.url;
 
-            // 2. İstatistikleri Hesapla
             const prices = product.priceHistory.map(h => h.price);
             const dates = product.priceHistory.map(h => new Date(h.date).toLocaleDateString("tr-TR"));
             const firstDate = new Date(product.priceHistory[0].date).toLocaleDateString('tr-TR');
 
             const minPrice = Math.min(...prices);
             const maxPrice = Math.max(...prices);
-            // Ortalamayı bul
             const avgPrice = (prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(0);
 
             document.getElementById('m-min').innerText = minPrice + " TL";
@@ -296,7 +293,6 @@
 
             modal.style.display = 'flex';
 
-            // --- GRAFİK 1: FİYAT GEÇMİŞİ (Line) ---
             if (charts.price) charts.price.destroy();
             charts.price = new Chart(document.getElementById('priceChart'), {
                 type: 'line',
@@ -315,16 +311,13 @@
                 options: { responsive: true, plugins: { legend: { display: false } } }
             });
 
-            // --- GRAFİK 2: DEĞİŞİM ANALİZİ (Bar) ---
-            // Fiyat farklarını hesapla (Bugün - Dün)
             let changes = [];
             let colors = [];
             for (let i = 0; i < prices.length; i++) {
-                if (i === 0) { changes.push(0); colors.push('gray'); } // İlk gün değişim yok
+                if (i === 0) { changes.push(0); colors.push('gray'); } 
                 else {
                     let diff = prices[i] - prices[i-1];
                     changes.push(diff);
-                    // İndirim varsa YEŞİL, Zam varsa KIRMIZI
                     colors.push(diff <= 0 ? '#27ae60' : '#e74c3c');
                 }
             }
@@ -344,17 +337,16 @@
                 options: { responsive: true, plugins: { legend: { display: false } } }
             });
 
-            // --- GRAFİK 3: ORTALAMA vs ŞU AN (Horizontal Bar) ---
             if (charts.compare) charts.compare.destroy();
             charts.compare = new Chart(document.getElementById('comparisonChart'), {
                 type: 'bar',
-                indexAxis: 'y', // Yatay bar yapar
+                indexAxis: 'y', 
                 data: {
                     labels: ['Ortalama', 'Şu Anki'],
                     datasets: [{
                         label: 'Fiyat',
                         data: [avgPrice, product.currentPrice],
-                        backgroundColor: ['#95a5a6', product.currentPrice < avgPrice ? '#27ae60' : '#e74c3c'], // Ucuzsa yeşil
+                        backgroundColor: ['#95a5a6', product.currentPrice < avgPrice ? '#27ae60' : '#e74c3c'], 
                         borderRadius: 5
                     }]
                 },
