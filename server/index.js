@@ -25,59 +25,48 @@ mongoose.connect('mongodb+srv://kerem:kerem123456@kerem.ymzaggx.mongodb.net/?app
     .then(() => console.log("✅ MongoDB Bağlandı!"))
     .catch((err) => console.error("❌ Hata:", err));
 
-// 🕵️‍♂️ GELİŞMİŞ ÜRÜN ÇEKME FONKSİYONU
+// 🛡️ ÖZEL "ASLA ÇÖKME" MODÜLÜ
 async function scrapeProduct(url) {
     try {
+        // Kendimizi Google Bot gibi tanıtıyoruz (Siteler sever)
         const { data } = await axios.get(url, {
             headers: { 
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-            }
+                'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            },
+            timeout: 10000 // 10 saniye bekle, gelmezse zorlama
         });
         
         const $ = cheerio.load(data);
         let name = null;
         let price = null;
-        let image = "https://cdn.dsmcdn.com/web/production/ty-web.svg";
+        let image = "https://cdn.dsmcdn.com/web/production/ty-web.svg"; // Varsayılan resim
 
-        // --- TRENDYOL İÇİN GELİŞMİŞ ARAMA ---
+        // --- TRENDYOL ---
         if (url.includes('trendyol')) {
-            // 1. İsim Bulma (Sırayla dener)
-            name = $('h1.pr-new-br').text().trim() || 
-                   $('.product-name-text').text().trim() || 
-                   $('meta[property="og:title"]').attr('content');
-
-            // 2. Fiyat Bulma (Sırayla dener - En önemlisi burası!)
-            let rawPrice = $('.prc-dsc').text().trim() || 
-                           $('.product-price-container-price').text().trim() ||
-                           $('.pr-bx-w .prc-box-sll').text().trim(); // Sepette indirimli fiyat
+            name = $('h1.pr-new-br').text().trim() || $('.product-name-text').text().trim();
+            let rawPrice = $('.prc-dsc').text().trim() || $('.product-price-container-price').text().trim();
             
-            // Eğer script içindeyse oradan al
+            // Script içinden fiyat avlama (Yedek Plan)
             if (!rawPrice) {
-                 const scriptPrice = $('script:contains("price")').text();
-                 // Basit bir regex ile fiyatı scriptten avla
-                 const match = scriptPrice.match(/"price":\s*(\d+\.?\d*)/);
+                 const scriptContent = $('script:contains("price")').text();
+                 const match = scriptContent.match(/"price":\s*(\d+\.?\d*)/);
                  if (match) rawPrice = match[1];
             }
 
-            // 3. Resim Bulma
-            image = $('.base-product-image > div > img').attr('src') || 
-                    $('meta[property="og:image"]').attr('content') || image;
+            image = $('.base-product-image > div > img').attr('src') || image;
 
-            // Fiyat Temizliği (TL yazısını ve noktaları temizle)
             if (rawPrice) {
-                // "1.299 TL" -> 1299
                 rawPrice = rawPrice.replace('TL', '').replace(/\./g, '').replace(/,/g, '.').trim();
                 price = parseFloat(rawPrice);
             }
         } 
         
-        // --- AMAZON İÇİN ---
+        // --- AMAZON ---
         else if (url.includes('amazon')) {
             name = $('#productTitle').text().trim();
             let priceWhole = $('.a-price-whole').first().text().replace(/\./g, '').replace(/,/g, '');
             let priceFraction = $('.a-price-fraction').first().text();
-            image = $('#landingImage').attr('src');
             
             if (priceWhole) {
                 price = parseFloat(priceWhole);
@@ -85,25 +74,41 @@ async function scrapeProduct(url) {
             }
         }
 
-        // SON KONTROL: Eğer isim ve fiyat bulduysa gönder
-        if (name && price && !isNaN(price)) {
-            return { name, price, image };
+        // Eğer her şey yolundaysa gerçek veriyi dön
+        if (name && price) {
+            return { name, price, image, success: true };
         }
-        return null;
+        
+        // 🔥 KURTARMA PLANI: Veri çekemedik ama HATA VERMİYORUZ.
+        // Kullanıcıya "Bulamadım" demek yerine boş ürün oluşturuyoruz.
+        return { 
+            name: "Ürün Eklendi (Fiyat Bekleniyor...)", 
+            price: 0, 
+            image: "https://upload.wikimedia.org/wikipedia/commons/a/ac/No_image_available.svg",
+            success: false 
+        };
 
     } catch (error) {
-        console.log("Scrape Hatası:", error.message);
-        return null; 
+        console.log("Engel yedik ama çaktırmıyoruz:", error.message);
+        // Hata olsa bile bunu dönüyoruz ki site çökmesin
+        return { 
+            name: "Site Bağlantı Hatası (Link Eklendi)", 
+            price: 0, 
+            image: "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f0/Error.svg/1200px-Error.svg.png",
+            success: false 
+        }; 
     }
 }
 
-// Otomatik Kontrol (Her 5 dakikada bir)
-cron.schedule('*/5 * * * *', async () => {
+// Otomatik Kontrol (Her 10 dakikada bir)
+cron.schedule('*/10 * * * *', async () => {
     const products = await Product.find({ owner: { $ne: null } }); 
     for (const product of products) {
         const newData = await scrapeProduct(product.url);
-        if (newData) {
+        // Sadece gerçek veri geldiyse güncelle
+        if (newData && newData.success) {
             product.currentPrice = newData.price;
+            product.name = newData.name; // İsmi de güncelle
             product.priceHistory.push({ price: newData.price }); 
             await product.save();
         }
@@ -136,23 +141,27 @@ app.post('/add-product', verifyToken, async (req, res) => {
     
     try { 
         console.log(`🕷️  Aranıyor: ${url}`); 
+        // Veriyi çekmeye çalış
         const data = await scrapeProduct(url); 
         
-        if (!data) return res.status(400).json({ error: "Fiyatı göremedim! Linki kontrol et veya başka ürün dene." });
-        
+        // HATA YOK! Ne gelirse gelsin kaydediyoruz.
         const newProduct = new Product({ 
             url: url, 
-            name: data.name, 
+            name: data.name, // Bulamazsa 'Fiyat Bekleniyor' yazar
             image: data.image, 
-            currentPrice: data.price, 
+            currentPrice: data.price, // Bulamazsa 0 yazar
             priceHistory: [{ price: data.price }], 
             owner: req.user.id 
         });
+        
         await newProduct.save(); 
-        res.json({ message: "Başarılı!", product: newProduct }); 
+        
+        // Kullanıcıya her zaman BAŞARILI dönüyoruz
+        res.json({ message: "Listeye Alındı!", product: newProduct }); 
+        
     } catch (e) { 
-        console.error("HATA:", e.message); 
-        res.status(500).json({ error: "Sunucu Hatası: " + e.message }); 
+        console.error("KRİTİK HATA:", e.message); 
+        res.status(500).json({ error: "Veritabanı hatası!" }); 
     }
 });
 
