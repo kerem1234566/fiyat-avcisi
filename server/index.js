@@ -1,7 +1,8 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const puppeteer = require('puppeteer');
+const axios = require('axios'); // Yeni hafif motor
+const cheerio = require('cheerio'); // Yeni okuyucu
 const bcrypt = require('bcryptjs'); 
 const jwt = require('jsonwebtoken'); 
 const cron = require('node-cron'); 
@@ -15,83 +16,67 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Site dosyalarını sunmak için gerekli ayar:
 app.use(express.static(path.join(__dirname, '../client')));
 
 const JWT_SECRET = "cok_gizli_bir_sifre_buraya_yazilir"; 
 
-// --- DÜZELTİLMİŞ MONGODB BAĞLANTISI ---
-// Şifre ve tırnak işaretleri artık %100 doğru:
+// --- MONGODB BAĞLANTISI (Senin Şifrenle) ---
 mongoose.connect('mongodb+srv://kerem:kerem123456@kerem.ymzaggx.mongodb.net/?appName=kerem')
     .then(() => console.log("✅ MongoDB Bağlandı!"))
     .catch((err) => console.error("❌ Hata:", err));
 
+// --- YENİ HAFİF ÜRÜN ÇEKME FONKSİYONU ---
 async function scrapeProduct(url) {
-    // Render için özel tarayıcı ayarları
-    const browser = await puppeteer.launch({ 
-        headless: "new", 
-        args: ['--no-sandbox', '--disable-setuid-sandbox'] 
-    });
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
     try {
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-        let data = null;
+        // Tarayıcı açmak yerine direkt HTML kodunu çekiyoruz (Çok daha hızlı)
+        const { data } = await axios.get(url, {
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
+            }
+        });
+        
+        const $ = cheerio.load(data);
+        let productData = null;
 
         if (url.includes('amazon')) {
-            data = await page.evaluate(() => {
-                const priceElement = document.querySelector('.a-price-whole');
-                const fractionElement = document.querySelector('.a-price-fraction');
-                const titleElement = document.querySelector('#productTitle');
-                const imgElement = document.querySelector('#landingImage');
-                if (!priceElement) return null;
-                let rawPrice = priceElement.innerText.replace(/\./g, '').replace(/,/g, '');
-                if (fractionElement) rawPrice += '.' + fractionElement.innerText;
-                return { name: titleElement ? titleElement.innerText.trim() : "Amazon Ürünü", price: parseFloat(rawPrice), image: imgElement ? imgElement.src : "" };
-            });
+            const title = $('#productTitle').text().trim();
+            const priceWhole = $('.a-price-whole').first().text().replace(/\./g, '').replace(/,/g, '');
+            const priceFraction = $('.a-price-fraction').first().text();
+            const image = $('#landingImage').attr('src');
+            
+            if (title && priceWhole) {
+                let finalPrice = parseFloat(priceWhole);
+                if (priceFraction) finalPrice += parseFloat("0." + priceFraction);
+                productData = { name: title, price: finalPrice, image: image };
+            }
         } 
         else if (url.includes('trendyol')) {
-            data = await page.evaluate(() => {
+            const scriptContent = $('script[type="application/ld+json"]').first().html();
+            if (scriptContent) {
                 try {
-                    const scripts = document.querySelectorAll('script[type="application/ld+json"]');
-                    for (let script of scripts) {
-                        try {
-                            const json = JSON.parse(script.innerText);
-                            if (json && json.offers && json.offers.price) {
-                                let finalImage = "https://cdn.dsmcdn.com/web/production/ty-web.svg"; 
-                                if (json.image) {
-                                    if (typeof json.image === 'string') finalImage = json.image;
-                                    else if (Array.isArray(json.image)) {
-                                        if (typeof json.image[0] === 'string') finalImage = json.image[0];
-                                        else if (json.image[0].url) finalImage = json.image[0].url;
-                                        else if (json.image[0].contentUrl) finalImage = json.image[0].contentUrl;
-                                    }
-                                    else if (typeof json.image === 'object') {
-                                        let content = json.image.url || json.image.contentUrl;
-                                        if (Array.isArray(content)) finalImage = content[0];
-                                        else finalImage = content;
-                                    }
-                                }
-                                return { name: json.name, price: parseFloat(json.offers.price), image: finalImage };
-                            }
-                        } catch(e) {}
+                    const json = JSON.parse(scriptContent);
+                    if (json && json.offers && json.offers.price) {
+                        let finalImage = "https://cdn.dsmcdn.com/web/production/ty-web.svg";
+                        // Resim bulma mantığı
+                        if (json.image) {
+                            if (typeof json.image === 'string') finalImage = json.image;
+                            else if (Array.isArray(json.image) && json.image.length > 0) finalImage = json.image[0];
+                            else if (typeof json.image === 'object' && json.image.url) finalImage = json.image.url;
+                        }
+                        productData = { name: json.name, price: parseFloat(json.offers.price), image: finalImage };
                     }
-                    return null; 
-                } catch (e) { return null; }
-            });
+                } catch (e) {}
+            }
         }
 
-        await browser.close();
-        return data;
+        return productData;
+
     } catch (error) {
-        await browser.close();
         console.log("Hata:", error.message);
         return null; 
     }
 }
 
-// Otomatik Fiyat Kontrolü (Her dakika)
 cron.schedule('* * * * *', async () => {
     console.log("⏰ KONTROL BAŞLADI...");
     const products = await Product.find({ owner: { $ne: null } }); 
@@ -144,7 +129,8 @@ app.post('/add-product', verifyToken, async (req, res) => {
     try { 
         console.log(`🕷️  Aranıyor: ${url}`); 
         const data = await scrapeProduct(url); 
-        if (!data) return res.status(400).json({ error: "Veri alınamadı!" });
+        if (!data) return res.status(400).json({ error: "Veri alınamadı! Linki kontrol et." });
+        
         const newProduct = new Product({ 
             url: url, 
             name: data.name, 
@@ -168,7 +154,6 @@ app.get('/my-products', verifyToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Liste hatası" }); } 
 });
 
-// Ana Sayfa Yönlendirmesi
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '../client/index.html'));
 });
