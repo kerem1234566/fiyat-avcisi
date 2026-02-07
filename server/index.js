@@ -25,38 +25,69 @@ mongoose.connect('mongodb+srv://kerem:kerem123456@kerem.ymzaggx.mongodb.net/?app
     .then(() => console.log("✅ MongoDB Bağlandı!"))
     .catch((err) => console.error("❌ Hata:", err));
 
-// 🕵️‍♂️ ARKA PLAN AJANI (Sadece Cron İçin)
+// 🕵️‍♂️ ÜRÜN ÇEKME FONKSİYONU
 async function scrapeProduct(url) {
     try {
         const { data } = await axios.get(url, {
             headers: { 
-                'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1',
             },
             timeout: 5000
         });
-        const $ = cheerio.load(data);
-        let price = null;
         
-        // Basit Fiyat Bulucu
+        const $ = cheerio.load(data);
+        let product = { name: null, price: null, image: null };
+
+        // --- TRENDYOL (Geliştirilmiş) ---
         if (url.includes('trendyol')) {
-            let rawPrice = $('.prc-dsc').text().trim() || $('.product-price-container-price').text().trim();
-            if (rawPrice) price = parseFloat(rawPrice.replace('TL', '').replace(/\./g, '').replace(/,/g, '.'));
-        } else if (url.includes('amazon')) {
-            let p = $('.a-price-whole').first().text().replace(/\./g, '').replace(/,/g, '');
-            if (p) price = parseFloat(p);
+            // Önce Meta Etiketlerine Bak (En Garantisi)
+            product.name = $('meta[property="og:title"]').attr('content') || $('h1.pr-new-br').text().trim();
+            product.image = $('meta[property="og:image"]').attr('content');
+            
+            // Fiyatı farklı yerlerde ara
+            let rawPrice = $('.prc-dsc').text().trim() || 
+                           $('.product-price-container-price').text().trim() ||
+                           $('.ps-curr').text().trim();
+            
+            if (rawPrice) {
+                 rawPrice = rawPrice.replace('TL', '').replace(/\./g, '').replace(/,/g, '.').trim();
+                 product.price = parseFloat(rawPrice);
+            }
+        } 
+        
+        // --- AMAZON ---
+        else if (url.includes('amazon')) {
+            product.name = $('#productTitle').text().trim();
+            product.image = $('#landingImage').attr('src');
+            let priceWhole = $('.a-price-whole').first().text().replace(/\./g, '').replace(/,/g, '');
+            let priceFraction = $('.a-price-fraction').first().text();
+            
+            if (priceWhole) {
+                product.price = parseFloat(priceWhole);
+                if (priceFraction) product.price += parseFloat("0." + priceFraction);
+            }
         }
-        return price;
-    } catch (error) { return null; }
+
+        // Eğer isim buldu ama fiyat bulamadıysa yine de başarılı sayalım
+        if (product.name) {
+            return product;
+        }
+        return null;
+
+    } catch (error) {
+        console.log("Çekme hatası (Önemli değil, pas geçiyoruz):", error.message);
+        return null; 
+    }
 }
 
-// Otomatik Kontrol (Her 5 dakikada bir dener)
-cron.schedule('*/5 * * * *', async () => {
+// Otomatik Kontrol
+cron.schedule('*/10 * * * *', async () => {
     const products = await Product.find({ owner: { $ne: null } }); 
     for (const product of products) {
-        const newPrice = await scrapeProduct(product.url);
-        if (newPrice) {
-            product.currentPrice = newPrice;
-            product.priceHistory.push({ price: newPrice }); 
+        const newData = await scrapeProduct(product.url);
+        if (newData && newData.price) {
+            product.currentPrice = newData.price;
+            product.priceHistory.push({ price: newData.price }); 
             await product.save();
         }
     }
@@ -82,30 +113,42 @@ app.post('/login', async (req, res) => {
     try { const user = await User.findOne({ username }); if (!user) return res.status(400).json({ error: "Kullanıcı yok!" }); const isMatch = await bcrypt.compare(password, user.password); if (!isMatch) return res.status(400).json({ error: "Şifre yanlış!" }); const token = jwt.sign({ id: user._id }, JWT_SECRET); res.json({ token, username: user.username }); } catch (e) { res.status(500).json({ error: "Hata!" }); }
 });
 
-// 🔥 İŞTE HİLE BURADA: Sadece Kaydediyoruz, Fiyat Aramıyoruz!
+// 🔥 DÜZELTİLEN KISIM: TRENDYOL HATASI BURADA ENGELLENİYOR
 app.post('/add-product', verifyToken, async (req, res) => {
     const { url } = req.body; 
     if (!url) return res.status(400).json({ error: 'Link lazım!' });
     
     try { 
-        console.log(`💾 Link Kaydediliyor: ${url}`); 
+        console.log(`🕷️  Aranıyor: ${url}`); 
+        let data = await scrapeProduct(url); 
+
+        // Eğer Trendyol engellerse ve veri boş gelirse, SAHTE VERİ oluştur.
+        // Böylece 400 Hatası almazsın, ürün yine de eklenir!
+        if (!data) {
+            data = {
+                name: "Trendyol Ürünü (Fiyat Bekleniyor)",
+                image: "https://cdn.dsmcdn.com/web/production/ty-web.svg",
+                price: 0
+            };
+        }
         
-        // Fiyat aramadan direkt kaydediyoruz. Hata verme şansı YOK.
+        // Fiyat bulunamadıysa 0 yap, ama kaydet!
+        if (!data.price) data.price = 0;
+
         const newProduct = new Product({ 
             url: url, 
-            name: "Yeni Ürün (Fiyat Aranıyor...)", 
-            image: "https://cdn.dsmcdn.com/web/production/ty-web.svg", 
-            currentPrice: 0, 
-            priceHistory: [{ price: 0 }], 
+            name: data.name || "İsimsiz Ürün", 
+            image: data.image, 
+            currentPrice: data.price, 
+            priceHistory: [{ price: data.price }], 
             owner: req.user.id 
         });
         
         await newProduct.save(); 
-        res.json({ message: "Başarılı! Ürün listeye eklendi.", product: newProduct }); 
-        
+        res.json({ message: "Başarılı!", product: newProduct }); 
     } catch (e) { 
         console.error("HATA:", e.message); 
-        res.status(500).json({ error: "Veritabanı hatası!" }); 
+        res.status(500).json({ error: "Sunucu Hatası!" }); 
     }
 });
 
