@@ -20,12 +20,14 @@ app.use(express.static(path.join(__dirname, '../client')));
 
 const JWT_SECRET = "cok_gizli_bir_sifre_buraya_yazilir"; 
 
-// MongoDB Bağlantısı
-mongoose.connect(process.env.MONGO_URI)
+// --- DÜZELTİLMİŞ MONGODB BAĞLANTISI ---
+// Şifre ve tırnak işaretleri artık %100 doğru:
+mongoose.connect('mongodb+srv://kerem:kerem123456@kerem.ymzaggx.mongodb.net/?appName=kerem')
     .then(() => console.log("✅ MongoDB Bağlandı!"))
     .catch((err) => console.error("❌ Hata:", err));
 
 async function scrapeProduct(url) {
+    // Render için özel tarayıcı ayarları
     const browser = await puppeteer.launch({ 
         headless: "new", 
         args: ['--no-sandbox', '--disable-setuid-sandbox'] 
@@ -89,6 +91,7 @@ async function scrapeProduct(url) {
     }
 }
 
+// Otomatik Fiyat Kontrolü (Her dakika)
 cron.schedule('* * * * *', async () => {
     console.log("⏰ KONTROL BAŞLADI...");
     const products = await Product.find({ owner: { $ne: null } }); 
@@ -115,19 +118,55 @@ const verifyToken = (req, res, next) => {
 
 app.post('/register', async (req, res) => {
     const { username, password } = req.body;
-    try { hashedPassword = await bcrypt.hash(password, 10); const newUser = new User({ username, password: hashedPassword }); await newUser.save(); res.json({ message: "Kayıt Oldu!" }); } catch (e) { res.status(500).json({ error: "İsim dolu!" }); }
+    try { 
+        const hashedPassword = await bcrypt.hash(password, 10); 
+        const newUser = new User({ username, password: hashedPassword }); 
+        await newUser.save(); 
+        res.json({ message: "Kayıt Oldu!" }); 
+    } catch (e) { res.status(500).json({ error: "Kullanıcı adı alınmış!" }); }
 });
+
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
-    try { const user = await User.findOne({ username }); if (!user) return res.status(400).json({ error: "Kullanıcı yok!" }); const isMatch = await bcrypt.compare(password, user.password); if (!isMatch) return res.status(400).json({ error: "Şifre yanlış!" }); const token = jwt.sign({ id: user._id }, JWT_SECRET); res.json({ token, username: user.username }); } catch (e) { res.status(500).json({ error: "Hata!" }); }
+    try { 
+        const user = await User.findOne({ username }); 
+        if (!user) return res.status(400).json({ error: "Kullanıcı yok!" }); 
+        const isMatch = await bcrypt.compare(password, user.password); 
+        if (!isMatch) return res.status(400).json({ error: "Şifre yanlış!" }); 
+        const token = jwt.sign({ id: user._id }, JWT_SECRET); 
+        res.json({ token, username: user.username }); 
+    } catch (e) { res.status(500).json({ error: "Hata!" }); }
 });
+
 app.post('/add-product', verifyToken, async (req, res) => {
-    const { url } = req.body; if (!url) return res.status(400).json({ error: 'Link lazım!' });
-    try { console.log(`🕷️  Aranıyor: ${url}`); const data = await scrapeProduct(url); if (!data) return res.status(400).json({ error: "Veri alınamadı!" });
-    const newProduct = new Product({ url: url, name: data.name, image: data.image, currentPrice: data.price, priceHistory: [{ price: data.price }], owner: req.user.id });
-    await newProduct.save(); res.json({ message: "Başarılı!", product: newProduct }); } catch (e) { console.error("HATA:", e.message); res.status(500).json({ error: "Sunucu Hatası: " + e.message }); }
+    const { url } = req.body; 
+    if (!url) return res.status(400).json({ error: 'Link lazım!' });
+    try { 
+        console.log(`🕷️  Aranıyor: ${url}`); 
+        const data = await scrapeProduct(url); 
+        if (!data) return res.status(400).json({ error: "Veri alınamadı!" });
+        const newProduct = new Product({ 
+            url: url, 
+            name: data.name, 
+            image: data.image, 
+            currentPrice: data.price, 
+            priceHistory: [{ price: data.price }], 
+            owner: req.user.id 
+        });
+        await newProduct.save(); 
+        res.json({ message: "Başarılı!", product: newProduct }); 
+    } catch (e) { 
+        console.error("HATA:", e.message); 
+        res.status(500).json({ error: "Sunucu Hatası: " + e.message }); 
+    }
 });
-app.get('/my-products', verifyToken, async (req, res) => { try { const products = await Product.find({ owner: req.user.id }); res.json(products); } catch (e) { res.status(500).json({ error: "Liste hatası" }); } });
+
+app.get('/my-products', verifyToken, async (req, res) => { 
+    try { 
+        const products = await Product.find({ owner: req.user.id }); 
+        res.json(products); 
+    } catch (e) { res.status(500).json({ error: "Liste hatası" }); } 
+});
 
 // Ana Sayfa Yönlendirmesi
 app.get('/', (req, res) => {
