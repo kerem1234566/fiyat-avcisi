@@ -1,7 +1,8 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const puppeteer = require('puppeteer');
+const axios = require('axios'); // Hafif motor
+const cheerio = require('cheerio'); // Kod okuyucu
 const bcrypt = require('bcryptjs'); 
 const jwt = require('jsonwebtoken'); 
 const cron = require('node-cron'); 
@@ -15,89 +16,81 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Site dosyalarını sunmak için gerekli ayar:
 app.use(express.static(path.join(__dirname, '../client')));
 
 const JWT_SECRET = "cok_gizli_bir_sifre_buraya_yazilir"; 
 
-// ✅ MONGODB BAĞLANTISI (Kesin Çalışan Hali)
+// ✅ MONGODB BAĞLANTISI (Senin Şifrenle)
 mongoose.connect('mongodb+srv://kerem:kerem123456@kerem.ymzaggx.mongodb.net/?appName=kerem')
     .then(() => console.log("✅ MongoDB Bağlandı!"))
     .catch((err) => console.error("❌ Hata:", err));
 
-// 🕷️ GÜÇLÜ ÜRÜN ÇEKME MOTORU (PUPPETEER)
+// 🕵️‍♂️ GİZLİ AJAN ÜRÜN ÇEKME FONKSİYONU
 async function scrapeProduct(url) {
-    let browser = null;
     try {
-        // Render için özel bellek ayarları
-        browser = await puppeteer.launch({ 
-            headless: "new", 
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage', // Bellek tasarrufu
-                '--disable-gpu'
-            ] 
+        // Amazon ve Trendyol'u kandırmak için "Ben Chrome Tarayıcısıyım" diyoruz
+        const { data } = await axios.get(url, {
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Referer': 'https://www.google.com/'
+            }
         });
         
-        const page = await browser.newPage();
-        // Gerçek insan gibi görünme ayarı
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        const $ = cheerio.load(data);
+        let productData = null;
 
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-        let data = null;
-
-        if (url.includes('amazon')) {
-            data = await page.evaluate(() => {
-                // Eğer Robot kontrolü varsa boş dön
-                const titleEl = document.querySelector('#productTitle');
-                const priceEl = document.querySelector('.a-price-whole');
-                const imgEl = document.querySelector('#landingImage');
-
-                if (!titleEl || !priceEl) return null;
-
-                let rawPrice = priceEl.innerText.replace(/\./g, '').replace(/,/g, '');
-                const fractionEl = document.querySelector('.a-price-fraction');
-                if (fractionEl) rawPrice += '.' + fractionEl.innerText;
-
-                return { 
-                    name: titleEl.innerText.trim(), 
-                    price: parseFloat(rawPrice), 
-                    image: imgEl ? imgEl.src : "" 
-                };
-            });
-        } 
-        else if (url.includes('trendyol')) {
-            data = await page.evaluate(() => {
+        // --- TRENDYOL MANTIĞI ---
+        if (url.includes('trendyol')) {
+            // 1. Yöntem: Gizli Script verisini oku
+            const scriptContent = $('script[type="application/ld+json"]').first().html();
+            if (scriptContent) {
                 try {
-                    const scripts = document.querySelectorAll('script[type="application/ld+json"]');
-                    for (let script of scripts) {
-                        const json = JSON.parse(script.innerText);
-                        if (json && json.offers && json.offers.price) {
-                             let finalImage = "https://cdn.dsmcdn.com/web/production/ty-web.svg";
-                             if (json.image && json.image.length > 0) finalImage = json.image[0];
-                             if (json.image && json.image.url) finalImage = json.image.url;
-                             
-                             return { name: json.name, price: parseFloat(json.offers.price), image: finalImage };
+                    const json = JSON.parse(scriptContent);
+                    if (json && json.offers && json.offers.price) {
+                        let finalImage = "https://cdn.dsmcdn.com/web/production/ty-web.svg";
+                        if (json.image) {
+                             if(typeof json.image === 'string') finalImage = json.image;
+                             else if(Array.isArray(json.image)) finalImage = json.image[0];
                         }
+                        return { name: json.name, price: parseFloat(json.offers.price), image: finalImage };
                     }
-                    return null; 
-                } catch (e) { return null; }
-            });
+                } catch (e) {}
+            }
+            // 2. Yöntem: Direkt sayfadan oku (Yedek)
+            const priceText = $('.prc-dsc').text().replace('TL', '').replace(/\./g, '').replace(/,/g, '.').trim();
+            const nameText = $('.pr-new-br').text().trim() + " " + $('.pr-new-br span').text().trim();
+            const imgLink = $('.base-product-image > div > img').attr('src');
+            
+            if (priceText) {
+                return { name: nameText || "Trendyol Ürünü", price: parseFloat(priceText), image: imgLink || "" };
+            }
+        } 
+        
+        // --- AMAZON MANTIĞI ---
+        else if (url.includes('amazon')) {
+            const title = $('#productTitle').text().trim();
+            const priceWhole = $('.a-price-whole').first().text().replace(/\./g, '').replace(/,/g, '');
+            const priceFraction = $('.a-price-fraction').first().text();
+            const image = $('#landingImage').attr('src');
+            
+            if (title && priceWhole) {
+                let finalPrice = parseFloat(priceWhole);
+                if (priceFraction) finalPrice += parseFloat("0." + priceFraction);
+                return { name: title, price: finalPrice, image: image };
+            }
         }
 
-        await browser.close();
-        return data;
+        return null;
 
     } catch (error) {
-        if(browser) await browser.close();
-        console.log("Scrape Hatası:", error.message);
+        console.log("Scrape Hatası (Site engelledi veya link bozuk):", error.message);
         return null; 
     }
 }
 
-// Otomatik Kontrol (Her 5 dakikada bir - Sistemi yormamak için)
+// Otomatik Kontrol (Her 5 dakikada bir)
 cron.schedule('*/5 * * * *', async () => {
     console.log("⏰ KONTROL BAŞLADI...");
     const products = await Product.find({ owner: { $ne: null } }); 
@@ -139,8 +132,8 @@ app.post('/add-product', verifyToken, async (req, res) => {
         console.log(`🕷️  Aranıyor: ${url}`); 
         const data = await scrapeProduct(url); 
         
-        // Eğer Amazon engellerse veya ürün bulunamazsa:
-        if (!data || isNaN(data.price)) return res.status(400).json({ error: "Veri çekilemedi (Robot koruması veya hatalı link)." });
+        // Ürün bulunamazsa 500 VERME, 400 VER (Böylece site çökmez, sadece uyarı çıkar)
+        if (!data) return res.status(400).json({ error: "Ürün bilgileri çekilemedi! (Site engellemiş olabilir, başka site dene)." });
         
         const newProduct = new Product({ 
             url: url, 
@@ -154,14 +147,11 @@ app.post('/add-product', verifyToken, async (req, res) => {
         res.json({ message: "Başarılı!", product: newProduct }); 
     } catch (e) { 
         console.error("HATA:", e.message); 
-        // 500 hatası yerine 400 döndür ki site çökmesin
-        res.status(400).json({ error: "İşlem başarısız: " + e.message }); 
+        res.status(500).json({ error: "Sunucu Hatası: " + e.message }); 
     }
 });
 
 app.get('/my-products', verifyToken, async (req, res) => { try { const products = await Product.find({ owner: req.user.id }); res.json(products); } catch (e) { res.status(500).json({ error: "Liste hatası" }); } });
-
 app.get('/', (req, res) => { res.sendFile(path.join(__dirname, '../client/index.html')); });
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Sunucu Hazır: http://localhost:${PORT}`));
