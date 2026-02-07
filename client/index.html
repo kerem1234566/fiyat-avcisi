@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fiyat Avcısı Pro 🏹</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        /* GENEL TASARIM */
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #333;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 500px;
+            text-align: center;
+        }
+
+        h1 { color: #4a4a4a; margin-bottom: 5px; }
+        .subtitle { font-size: 0.9em; color: #888; margin-bottom: 20px; }
+
+        input { width: 100%; padding: 15px; margin: 10px 0; border: 2px solid #eee; border-radius: 12px; box-sizing: border-box; background-color: #f9f9f9; }
+        button { width: 100%; padding: 15px; border: none; border-radius: 12px; cursor: pointer; font-size: 16px; font-weight: 600; margin-top: 15px; transition: 0.3s; }
+        
+        .btn-primary { background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); color: white; }
+        .btn-primary:hover { transform: scale(1.02); }
+        .btn-danger { background-color: #ff6b6b; color: white; margin-top: 10px; }
+        .btn-link { background-color: #f39c12; color: white; text-decoration: none; display: inline-block; padding: 10px 20px; border-radius: 8px; margin-top: 10px; font-size: 14px; }
+        .btn-link:hover { background-color: #e67e22; }
+
+        .toggle-text { margin-top: 20px; font-size: 0.85em; color: #666; cursor: pointer; }
+
+        /* LİSTE TASARIMI */
+        #product-list { margin-top: 30px; max-height: 400px; overflow-y: auto; }
+        .product-card {
+            background: #fff; border-radius: 15px; padding: 15px; margin-bottom: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.05); text-align: left; border-left: 5px solid #27ae60;
+            display: flex; align-items: center; gap: 15px; cursor: pointer; transition: 0.2s; position: relative;
+        }
+        .product-card:hover { transform: translateX(5px); background-color: #f8f9fa; }
+        .product-img { width: 60px; height: 60px; object-fit: contain; border-radius: 5px; }
+        .product-info h3 { font-size: 14px; margin: 0; color: #333; line-height: 1.4; }
+        .product-price { color: #27ae60; font-weight: bold; font-size: 16px; }
+        .date-badge { font-size: 10px; color: #999; position: absolute; top: 10px; right: 10px; }
+
+        /* MODAL (PENCERE) AYARLARI */
+        .modal {
+            display: none; position: fixed; z-index: 1000; left: 0; top: 0;
+            width: 100%; height: 100%; background-color: rgba(0,0,0,0.7);
+            justify-content: center; align-items: center;
+        }
+        .modal-content {
+            background-color: white; padding: 25px; border-radius: 20px;
+            width: 90%; max-width: 900px; height: 80vh; /* Ekranın %80'i kadar yükseklik */
+            position: relative;
+            display: flex; flex-direction: row; gap: 20px;
+            align-items: flex-start;
+        }
+        .close-btn { position: absolute; top: 10px; right: 20px; font-size: 28px; cursor: pointer; color: #aaa; z-index: 10; }
+        
+        /* Sol Taraf (Sabit Bilgiler) */
+        .modal-info { flex: 1; text-align: left; border-right: 1px solid #eee; padding-right: 20px; height: 100%; overflow-y: auto; }
+        .modal-info img { width: 100%; max-height: 200px; object-fit: contain; margin-bottom: 15px; }
+        .stat-box { background: #f8f9fa; padding: 10px; border-radius: 10px; margin-bottom: 10px; font-size: 0.9em; }
+        .stat-label { color: #888; display: block; font-size: 0.8em; }
+        .stat-value { font-weight: bold; color: #333; font-size: 1.1em; }
+
+        /* Sağ Taraf (Kaydırılabilir Grafikler) */
+        .modal-chart-container { 
+            flex: 1.5; 
+            height: 100%; 
+            overflow-y: auto; /* Dikey kaydırma açıldı */
+            padding-right: 10px;
+        }
+        .chart-box {
+            margin-bottom: 30px;
+            background: #fff;
+            padding: 10px;
+            border-radius: 10px;
+            border: 1px solid #eee;
+        }
+        .chart-title { font-size: 0.9em; color: #666; margin-bottom: 10px; font-weight: bold; text-align: center; }
+
+        @media (max-width: 768px) {
+            .modal-content { flex-direction: column; height: auto; max-height: 90vh; overflow-y: auto; }
+            .modal-info { border-right: none; border-bottom: 1px solid #eee; padding-bottom: 20px; padding-right: 0; height: auto; }
+            .modal-chart-container { overflow-y: visible; height: auto; }
+        }
+
+        /* GİZLİ BÖLÜMLER */
+        #dashboard-section, #register-form, #loader { display: none; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #764ba2; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <div class="container" id="auth-section">
+        <h1 id="auth-title">Hoş Geldin 👋</h1>
+        <p class="subtitle" id="auth-subtitle">Devam etmek için giriş yap</p>
+        <input type="text" id="username" placeholder="Kullanıcı Adı">
+        <input type="password" id="password" placeholder="Şifre">
+        <div id="login-form">
+            <button class="btn-primary" onclick="login()">Giriş Yap 🚀</button>
+            <p class="toggle-text" onclick="showRegister()">Hesabın yok mu? <b>Kayıt Ol</b></p>
+        </div>
+        <div id="register-form">
+            <button class="btn-primary" onclick="register()">Kayıt Ol ✨</button>
+            <p class="toggle-text" onclick="showLogin()">Zaten hesabın var mı? <b>Giriş Yap</b></p>
+        </div>
+        <p id="auth-message" style="color: #e74c3c; margin-top: 10px;"></p>
+    </div>
+
+    <div class="container" id="dashboard-section">
+        <h1>🏹 Fiyat Avcısı</h1>
+        <p class="subtitle">Selam <b id="user-display" style="color:#764ba2"></b>, detaylar için ürünlere tıkla!</p>
+        <input type="text" id="urlInput" placeholder="Amazon ürün linki..." />
+        <button class="btn-primary" onclick="urunEkle()">Avı Başlat 🎯</button>
+        <div id="loader" class="loader"></div>
+        <div id="product-list"></div>
+        <button class="btn-danger" onclick="logout()">Çıkış Yap 🔒</button>
+    </div>
+
+    <div id="detailModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal()">&times;</span>
+            
+            <div class="modal-info">
+                <img id="m-image" src="" alt="Ürün">
+                <h3 id="m-title" style="font-size:16px;">Ürün Adı</h3>
+                
+                <div class="stat-box">
+                    <span class="stat-label">Şu Anki Fiyat</span>
+                    <span class="stat-value" id="m-current" style="color:#27ae60;">0 TL</span>
+                </div>
+                
+                <div style="display:flex; gap:10px;">
+                    <div class="stat-box" style="flex:1;">
+                        <span class="stat-label">En Düşük 📉</span>
+                        <span class="stat-value" id="m-min">0 TL</span>
+                    </div>
+                    <div class="stat-box" style="flex:1;">
+                        <span class="stat-label">En Yüksek 📈</span>
+                        <span class="stat-value" id="m-max">0 TL</span>
+                    </div>
+                </div>
+
+                <div class="stat-box">
+                    <span class="stat-label">Ortalama Fiyat 📊</span>
+                    <span class="stat-value" id="m-avg">0 TL</span>
+                </div>
+
+                <div class="stat-box">
+                    <span class="stat-label">Takip Başlangıcı 📅</span>
+                    <span class="stat-value" id="m-date">-</span>
+                </div>
+
+                <a id="m-link" href="#" target="_blank" class="btn-link">Mağazaya Git 🛒</a>
+            </div>
+
+            <div class="modal-chart-container">
+                
+                <div class="chart-box">
+                    <div class="chart-title">📈 Fiyat Geçmişi</div>
+                    <canvas id="priceChart"></canvas>
+                </div>
+
+                <div class="chart-box">
+                    <div class="chart-title">🔻 İndirim / Zam Miktarı (TL) 🔺</div>
+                    <canvas id="changeChart"></canvas>
+                </div>
+
+                <div class="chart-box">
+                    <div class="chart-title">⚖️ Ortalama vs Şu Anki Durum</div>
+                    <canvas id="comparisonChart"></canvas>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = "http://localhost:3000";
+        let globalProducts = [];
+        
+        // Grafik Nesnelerini Saklamak İçin
+        let charts = { price: null, change: null, compare: null };
+
+        function showRegister() { document.getElementById('login-form').style.display='none'; document.getElementById('register-form').style.display='block'; }
+        function showLogin() { document.getElementById('login-form').style.display='block'; document.getElementById('register-form').style.display='none'; }
+        
+        async function register() {
+            const u = document.getElementById('username').value; const p = document.getElementById('password').value;
+            const res = await fetch(`${API_URL}/register`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({username:u, password:p}) });
+            if(res.ok){ alert("Kayıt Başarılı!"); showLogin(); } else { alert("Hata!"); }
+        }
+
+        async function login() {
+            const u = document.getElementById('username').value; const p = document.getElementById('password').value;
+            const res = await fetch(`${API_URL}/login`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({username:u, password:p}) });
+            const data = await res.json();
+            if(res.ok) { localStorage.setItem('token', data.token); localStorage.setItem('username', data.username); openDashboard(); }
+            else { alert(data.error); }
+        }
+
+        function openDashboard() {
+            document.getElementById('auth-section').style.display = 'none';
+            document.getElementById('dashboard-section').style.display = 'block';
+            document.getElementById('user-display').innerText = localStorage.getItem('username');
+            getUrunler();
+        }
+
+        function logout() { localStorage.clear(); location.reload(); }
+        if (localStorage.getItem('token')) openDashboard();
+
+        async function urunEkle() {
+            const url = document.getElementById('urlInput').value;
+            const loader = document.getElementById('loader');
+            if(!url) return alert("Link gir!");
+            loader.style.display = 'block';
+            try {
+                const res = await fetch(`${API_URL}/add-product`, {
+                    method: 'POST', headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+localStorage.getItem('token')},
+                    body: JSON.stringify({url})
+                });
+                loader.style.display = 'none';
+                if(res.ok) { getUrunler(); document.getElementById('urlInput').value = ""; }
+                else { alert("Hata oluştu"); }
+            } catch(e) { loader.style.display='none'; alert("Sunucu hatası"); }
+        }
+
+        async function getUrunler() {
+            const listDiv = document.getElementById('product-list');
+            const res = await fetch(`${API_URL}/my-products`, { headers: {'Authorization':'Bearer '+localStorage.getItem('token')} });
+            globalProducts = await res.json();
+
+            listDiv.innerHTML = "";
+            if(globalProducts.length === 0) { listDiv.innerHTML = "<p>Listen boş...</p>"; return; }
+
+            globalProducts.forEach((p, index) => {
+                const tarih = p.priceHistory.length > 0 ? new Date(p.priceHistory[0].date).toLocaleDateString('tr-TR') : '-';
+                
+                listDiv.innerHTML += `
+                    <div class="product-card" onclick="openDetail(${index})">
+                        <span class="date-badge">${tarih}</span>
+                        <img src="${p.image}" class="product-img">
+                        <div class="product-info">
+                            <h3>${p.name.substring(0, 45)}...</h3>
+                            <div class="product-price">${p.currentPrice} TL</div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        // --- GELİŞMİŞ GRAFİK MOTORU ---
+        function openDetail(index) {
+            const product = globalProducts[index];
+            const modal = document.getElementById('detailModal');
+            
+            // 1. Bilgileri Doldur
+            document.getElementById('m-image').src = product.image;
+            document.getElementById('m-title').innerText = product.name;
+            document.getElementById('m-current').innerText = product.currentPrice + " TL";
+            document.getElementById('m-link').href = product.url;
+
+            // 2. İstatistikleri Hesapla
+            const prices = product.priceHistory.map(h => h.price);
+            const dates = product.priceHistory.map(h => new Date(h.date).toLocaleDateString("tr-TR"));
+            const firstDate = new Date(product.priceHistory[0].date).toLocaleDateString('tr-TR');
+
+            const minPrice = Math.min(...prices);
+            const maxPrice = Math.max(...prices);
+            // Ortalamayı bul
+            const avgPrice = (prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(0);
+
+            document.getElementById('m-min').innerText = minPrice + " TL";
+            document.getElementById('m-max').innerText = maxPrice + " TL";
+            document.getElementById('m-avg').innerText = avgPrice + " TL";
+            document.getElementById('m-date').innerText = firstDate;
+
+            modal.style.display = 'flex';
+
+            // --- GRAFİK 1: FİYAT GEÇMİŞİ (Line) ---
+            if (charts.price) charts.price.destroy();
+            charts.price = new Chart(document.getElementById('priceChart'), {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [{
+                        label: 'Fiyat',
+                        data: prices,
+                        borderColor: '#764ba2',
+                        backgroundColor: 'rgba(118, 75, 162, 0.1)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: { responsive: true, plugins: { legend: { display: false } } }
+            });
+
+            // --- GRAFİK 2: DEĞİŞİM ANALİZİ (Bar) ---
+            // Fiyat farklarını hesapla (Bugün - Dün)
+            let changes = [];
+            let colors = [];
+            for (let i = 0; i < prices.length; i++) {
+                if (i === 0) { changes.push(0); colors.push('gray'); } // İlk gün değişim yok
+                else {
+                    let diff = prices[i] - prices[i-1];
+                    changes.push(diff);
+                    // İndirim varsa YEŞİL, Zam varsa KIRMIZI
+                    colors.push(diff <= 0 ? '#27ae60' : '#e74c3c');
+                }
+            }
+
+            if (charts.change) charts.change.destroy();
+            charts.change = new Chart(document.getElementById('changeChart'), {
+                type: 'bar',
+                data: {
+                    labels: dates,
+                    datasets: [{
+                        label: 'Değişim (TL)',
+                        data: changes,
+                        backgroundColor: colors,
+                        borderRadius: 5
+                    }]
+                },
+                options: { responsive: true, plugins: { legend: { display: false } } }
+            });
+
+            // --- GRAFİK 3: ORTALAMA vs ŞU AN (Horizontal Bar) ---
+            if (charts.compare) charts.compare.destroy();
+            charts.compare = new Chart(document.getElementById('comparisonChart'), {
+                type: 'bar',
+                indexAxis: 'y', // Yatay bar yapar
+                data: {
+                    labels: ['Ortalama', 'Şu Anki'],
+                    datasets: [{
+                        label: 'Fiyat',
+                        data: [avgPrice, product.currentPrice],
+                        backgroundColor: ['#95a5a6', product.currentPrice < avgPrice ? '#27ae60' : '#e74c3c'], // Ucuzsa yeşil
+                        borderRadius: 5
+                    }]
+                },
+                options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
+            });
+        }
+
+        function closeModal() {
+            document.getElementById('detailModal').style.display = 'none';
+        }
+        window.onclick = function(event) {
+            if (event.target == document.getElementById('detailModal')) closeModal();
+        }
+    </script>
+</body>
+</html>
