@@ -1,8 +1,8 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const axios = require('axios'); // Hafif motor
-const cheerio = require('cheerio'); // Kod okuyucu
+const axios = require('axios');
+const cheerio = require('cheerio');
 const bcrypt = require('bcryptjs'); 
 const jwt = require('jsonwebtoken'); 
 const cron = require('node-cron'); 
@@ -20,79 +20,85 @@ app.use(express.static(path.join(__dirname, '../client')));
 
 const JWT_SECRET = "cok_gizli_bir_sifre_buraya_yazilir"; 
 
-// ✅ MONGODB BAĞLANTISI (Senin Şifrenle)
+// ✅ MONGODB BAĞLANTISI
 mongoose.connect('mongodb+srv://kerem:kerem123456@kerem.ymzaggx.mongodb.net/?appName=kerem')
     .then(() => console.log("✅ MongoDB Bağlandı!"))
     .catch((err) => console.error("❌ Hata:", err));
 
-// 🕵️‍♂️ GİZLİ AJAN ÜRÜN ÇEKME FONKSİYONU
+// 🕵️‍♂️ GELİŞMİŞ ÜRÜN ÇEKME FONKSİYONU
 async function scrapeProduct(url) {
     try {
-        // Amazon ve Trendyol'u kandırmak için "Ben Chrome Tarayıcısıyım" diyoruz
         const { data } = await axios.get(url, {
             headers: { 
                 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                 'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-                'Referer': 'https://www.google.com/'
             }
         });
         
         const $ = cheerio.load(data);
-        let productData = null;
+        let name = null;
+        let price = null;
+        let image = "https://cdn.dsmcdn.com/web/production/ty-web.svg";
 
-        // --- TRENDYOL MANTIĞI ---
+        // --- TRENDYOL İÇİN GELİŞMİŞ ARAMA ---
         if (url.includes('trendyol')) {
-            // 1. Yöntem: Gizli Script verisini oku
-            const scriptContent = $('script[type="application/ld+json"]').first().html();
-            if (scriptContent) {
-                try {
-                    const json = JSON.parse(scriptContent);
-                    if (json && json.offers && json.offers.price) {
-                        let finalImage = "https://cdn.dsmcdn.com/web/production/ty-web.svg";
-                        if (json.image) {
-                             if(typeof json.image === 'string') finalImage = json.image;
-                             else if(Array.isArray(json.image)) finalImage = json.image[0];
-                        }
-                        return { name: json.name, price: parseFloat(json.offers.price), image: finalImage };
-                    }
-                } catch (e) {}
-            }
-            // 2. Yöntem: Direkt sayfadan oku (Yedek)
-            const priceText = $('.prc-dsc').text().replace('TL', '').replace(/\./g, '').replace(/,/g, '.').trim();
-            const nameText = $('.pr-new-br').text().trim() + " " + $('.pr-new-br span').text().trim();
-            const imgLink = $('.base-product-image > div > img').attr('src');
+            // 1. İsim Bulma (Sırayla dener)
+            name = $('h1.pr-new-br').text().trim() || 
+                   $('.product-name-text').text().trim() || 
+                   $('meta[property="og:title"]').attr('content');
+
+            // 2. Fiyat Bulma (Sırayla dener - En önemlisi burası!)
+            let rawPrice = $('.prc-dsc').text().trim() || 
+                           $('.product-price-container-price').text().trim() ||
+                           $('.pr-bx-w .prc-box-sll').text().trim(); // Sepette indirimli fiyat
             
-            if (priceText) {
-                return { name: nameText || "Trendyol Ürünü", price: parseFloat(priceText), image: imgLink || "" };
+            // Eğer script içindeyse oradan al
+            if (!rawPrice) {
+                 const scriptPrice = $('script:contains("price")').text();
+                 // Basit bir regex ile fiyatı scriptten avla
+                 const match = scriptPrice.match(/"price":\s*(\d+\.?\d*)/);
+                 if (match) rawPrice = match[1];
+            }
+
+            // 3. Resim Bulma
+            image = $('.base-product-image > div > img').attr('src') || 
+                    $('meta[property="og:image"]').attr('content') || image;
+
+            // Fiyat Temizliği (TL yazısını ve noktaları temizle)
+            if (rawPrice) {
+                // "1.299 TL" -> 1299
+                rawPrice = rawPrice.replace('TL', '').replace(/\./g, '').replace(/,/g, '.').trim();
+                price = parseFloat(rawPrice);
             }
         } 
         
-        // --- AMAZON MANTIĞI ---
+        // --- AMAZON İÇİN ---
         else if (url.includes('amazon')) {
-            const title = $('#productTitle').text().trim();
-            const priceWhole = $('.a-price-whole').first().text().replace(/\./g, '').replace(/,/g, '');
-            const priceFraction = $('.a-price-fraction').first().text();
-            const image = $('#landingImage').attr('src');
+            name = $('#productTitle').text().trim();
+            let priceWhole = $('.a-price-whole').first().text().replace(/\./g, '').replace(/,/g, '');
+            let priceFraction = $('.a-price-fraction').first().text();
+            image = $('#landingImage').attr('src');
             
-            if (title && priceWhole) {
-                let finalPrice = parseFloat(priceWhole);
-                if (priceFraction) finalPrice += parseFloat("0." + priceFraction);
-                return { name: title, price: finalPrice, image: image };
+            if (priceWhole) {
+                price = parseFloat(priceWhole);
+                if (priceFraction) price += parseFloat("0." + priceFraction);
             }
         }
 
+        // SON KONTROL: Eğer isim ve fiyat bulduysa gönder
+        if (name && price && !isNaN(price)) {
+            return { name, price, image };
+        }
         return null;
 
     } catch (error) {
-        console.log("Scrape Hatası (Site engelledi veya link bozuk):", error.message);
+        console.log("Scrape Hatası:", error.message);
         return null; 
     }
 }
 
 // Otomatik Kontrol (Her 5 dakikada bir)
 cron.schedule('*/5 * * * *', async () => {
-    console.log("⏰ KONTROL BAŞLADI...");
     const products = await Product.find({ owner: { $ne: null } }); 
     for (const product of products) {
         const newData = await scrapeProduct(product.url);
@@ -132,8 +138,7 @@ app.post('/add-product', verifyToken, async (req, res) => {
         console.log(`🕷️  Aranıyor: ${url}`); 
         const data = await scrapeProduct(url); 
         
-        // Ürün bulunamazsa 500 VERME, 400 VER (Böylece site çökmez, sadece uyarı çıkar)
-        if (!data) return res.status(400).json({ error: "Ürün bilgileri çekilemedi! (Site engellemiş olabilir, başka site dene)." });
+        if (!data) return res.status(400).json({ error: "Fiyatı göremedim! Linki kontrol et veya başka ürün dene." });
         
         const newProduct = new Product({ 
             url: url, 
